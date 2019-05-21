@@ -228,7 +228,7 @@ namespace CheckOnlineVkfaces
             /// <returns>Текстовое представление о последней активности заходов и выходов пользователя.</returns>
             private string GetDate_unsafe()
             {
-                string data = ReadAsDotnet("https://vkfaces.com/", "vk/user/" + Vkid);
+                string data = ReadAsXNetForce("https://vkfaces.com/", "vk/user/" + Vkid);
                 
                 int begin = data.IndexOf("Последнее посещение");
                 if (begin > 0)
@@ -245,13 +245,22 @@ namespace CheckOnlineVkfaces
                     data = data.Remove(begin, data.Length - begin);
                 else
                     throw new Exception("Новая строка не найдена.");
-                return data;
+                return data.Trim();
             }
 
             private string ReadAsXNet(string server, string addr)
             {
                 using (var client = new xNet.HttpRequest(server))
                 {
+                    return client.Get(addr).ToString();
+                }
+            }
+
+            private string ReadAsXNetForce(string server, string addr)
+            {
+                using (var client = new xNet.HttpRequest(server))
+                {
+                    client.IgnoreProtocolErrors = true;
                     return client.Get(addr).ToString();
                 }
             }
@@ -271,6 +280,17 @@ namespace CheckOnlineVkfaces
                 srm.Close();
                 resp.Close();
                 return data;
+            }
+
+            private string ReadAsWebClient(string server, string addr)
+            {
+                using (var client = new WebClient())
+                {
+                    byte[] bytes = client.DownloadData(server + addr);
+                    char[] outchars = new char[bytes.Length * 2];
+                    Encoding.UTF8.GetDecoder().Convert(bytes, 0, bytes.Length, outchars, 0, outchars.Length, true, out int a, out a, out bool completed);
+                    return new string(outchars).Replace("\0", "").Trim();
+                }
             }
 
             /// <summary>
