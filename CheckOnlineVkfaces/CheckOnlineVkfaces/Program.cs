@@ -5,6 +5,7 @@ using System.Net;
 using System.Text;
 using System.Timers;
 using System.Windows;
+using System.Speech.Synthesis;
 
 namespace CheckOnlineVkfaces
 {
@@ -13,19 +14,18 @@ namespace CheckOnlineVkfaces
         static void Main(string[] args)
         {
             // Инициализация интерфейсом -------
-            Console.Write("Интервал в секундах: ");
-            if (int.TryParse(Console.ReadLine(), out int sec) == false || sec < 3)
-            {
-                Console.WriteLine("Интервал задан не верно, интервал будет установлен по-умолчанию = 20");
-                sec = 20;
-            }
-            Console.WriteLine($"Нужно выводить сообщение Windows? {false.ToString()} - нет, {true.ToString()} - да");
+            Console.WriteLine($"Нужно выводить сообщение Windows? Напишите {false.ToString()} или {true.ToString()}");
             bool writeWindows = false;
             while (!bool.TryParse(Console.ReadLine(), out writeWindows)) ;
-            if(writeWindows)
+            if (writeWindows)
                 MessageBox.Show("Hello world!"); // Тест, что окошко может выводиться.
-
-            Manager manager = new Manager(sec, writeWindows);
+            Console.WriteLine($"Нужно ли голосове оповещение? Напишите {false.ToString()} или {true.ToString()}");
+            bool alarm = false;
+            while (!bool.TryParse(Console.ReadLine(), out alarm)) ;
+            if (alarm)
+                Console.Beep(1000, 200);
+            Manager manager = new Manager(writeWindows, alarm);
+            manager.Start();
             // Добавление пользователей -------
             Console.WriteLine("Напишите ид ВК пользователей через новую строку каждый:");
             do
@@ -42,18 +42,14 @@ namespace CheckOnlineVkfaces
             /// <summary>
             /// Инициализация менеджера.
             /// </summary>
-            /// <param name="sec">Количество секунд на обновление.</param>
             /// <param name="writeWindows">True, если надо вывести окошко при смене состояния. Иначе - False.</param>
-            public Manager(int sec = 20, bool writeWindows = false)
+            /// <param name="alarm">Нужно ли звуковое оповещение?</param>
+            public Manager(bool writeWindows = false, bool alarm = true)
             {
-                IntervalSec = sec;
                 this.writeWindows = writeWindows;
+                this.alarm = alarm;
+                synth.SetOutputToDefaultAudioDevice();
             }
-
-            /// <summary>
-            /// Количество секунд на обновление.
-            /// </summary>
-            private readonly int IntervalSec;
 
             /// <summary>
             /// True, если надо вывести окошко при смене состояния. Иначе - False.
@@ -61,9 +57,16 @@ namespace CheckOnlineVkfaces
             private readonly bool writeWindows;
 
             /// <summary>
+            /// True, если нужно звуковое оповещение при смене состояния. Иначе - False.
+            /// </summary>
+            private readonly bool alarm;
+
+            /// <summary>
             /// Список пользователей.
             /// </summary>
             private ISet<Client> Clients = new HashSet<Client>();
+
+            private Queue<Client> ToAdd = new Queue<Client>();
 
             /// <summary>
             /// Количество клиентов под управлением.
@@ -79,6 +82,7 @@ namespace CheckOnlineVkfaces
                 try
                 {
                     Add(new Client(Vkid));
+                    System.Threading.Thread.Sleep(500);
                 }
                 catch(Exception e)
                 {
@@ -93,9 +97,34 @@ namespace CheckOnlineVkfaces
             public void Add(Client client)
             {
                 client.Change += Update;
-                Clients.Add(client);
-                client.Start(IntervalSec * 1000);
-                Console.WriteLine(DateTime.Now + " ADD: " + client);
+                ToAdd.Enqueue(client);
+            }
+
+            private SpeechSynthesizer synth = new SpeechSynthesizer();
+
+            public void Start()
+            {
+                new System.Threading.Thread(() =>
+                {
+                    while (true)
+                    {
+                        lock (Clients)
+                        {
+                            foreach (Client client in Clients)
+                            {
+                                client.Update();
+                                System.Threading.Thread.Sleep(500);
+                            }
+                            while (ToAdd.Count > 0)
+                            {
+                                Client cl = ToAdd.Dequeue();
+                                Clients.Add(cl);
+                                Console.WriteLine(DateTime.Now + " ADD: " + cl);
+                                System.Threading.Thread.Sleep(500);
+                            }
+                        }
+                    }
+                }).Start();
             }
 
             /// <summary>
@@ -107,15 +136,22 @@ namespace CheckOnlineVkfaces
             {
                 string message = DateTime.Now + " UPDATE: " + client;
                 Console.WriteLine(message);
-                if (newDate.Contains("онлайн"))
+                if (alarm)
                 {
-                    Console.Beep(1000, 500);
-                }
-                else
-                {
-                    Console.Beep(1000, 200);
-                    Console.Beep(37, 100);
-                    Console.Beep(1000, 200);
+                    var name = client.Name.Split(' ');
+                    string toSay = "";
+                    for(int i = 0; i < 2 && i < name.Length; i++)
+                    {
+                        toSay += name[i] + " ";
+                    }
+                    if (newDate.Contains("онлайн"))
+                    {
+                        synth.Speak("Зашёл: " + toSay);
+                    }
+                    else
+                    {
+                        synth.Speak("Вышел: " + toSay);
+                    }
                 }
                 if(writeWindows)
                     MessageBox.Show(message);
@@ -135,13 +171,33 @@ namespace CheckOnlineVkfaces
             {
                 Vkid = vkid;
                 Old = GetDate_unsafe();
-                timer.Elapsed += Update;
             }
 
             /// <summary>
             /// Текущий vkid пользователя.
             /// </summary>
             public string Vkid { get; }
+
+            private string Name_ = null;
+
+            /// <summary>
+            /// Имя пользователя.
+            /// </summary>
+            public string Name {
+                get
+                {
+                    if(Name_ == null)
+                        updateName(ReadAsXNetForce("https://vkfaces.com/", "vk/user/" + Vkid));
+                    return Name_;
+                }
+            }
+
+            private void updateName(string httpFileContent)
+            {
+                int begin = httpFileContent.IndexOf("<title>") + "<title>".Length;
+                int end = httpFileContent.IndexOf("</title>");
+                Name_ = httpFileContent.Substring(begin, end - begin);
+            }
 
             /// <summary>
             /// Текстовое представление даты захода пользователя.
@@ -164,25 +220,9 @@ namespace CheckOnlineVkfaces
             }
 
             /// <summary>
-            /// Таймер, отвечающий за вызов обновления.
-            /// </summary>
-            private Timer timer = new Timer();
-
-            /// <summary>
-            /// Запускает слежку за активностью входов и выходов пользователя.
-            /// </summary>
-            /// <param name="updateTime">Интервал обновления за пользователем.</param>
-            public void Start(int updateTime = 20 * 1000)
-            {
-                timer.Interval = updateTime;
-                timer.Start();
-            }
-
-            /// <summary>
-            /// Вызывается таймером <see cref="timer"/>.
             /// Метод проверяет, изменился ли пользователь. Если да, то вызываются методы в <see cref="Change"/>.
             /// </summary>
-            private void Update(object sender, ElapsedEventArgs e)
+            public void Update()
             {
                 if(IsChange())
                 {
@@ -230,6 +270,9 @@ namespace CheckOnlineVkfaces
             {
                 string data = ReadAsXNetForce("https://vkfaces.com/", "vk/user/" + Vkid);
                 
+                if(Name_ == null)
+                    updateName(data);
+
                 int begin = data.IndexOf("Последнее посещение");
                 if (begin > 0)
                     data = data.Remove(0, begin);
@@ -298,7 +341,7 @@ namespace CheckOnlineVkfaces
             /// </summary>
             public override string ToString()
             {
-                return Vkid + ": " + Old;
+                return Vkid + " (" + Name + ")" + ": " + Old;
             }
 
             /// <summary>
