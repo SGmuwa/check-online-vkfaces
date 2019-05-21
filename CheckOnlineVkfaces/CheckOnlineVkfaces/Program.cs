@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Text;
 using System.Timers;
@@ -7,7 +8,7 @@ using System.Windows;
 
 namespace CheckOnlineVkfaces
 {
-    class Program
+    public class Program
     {
         static void Main(string[] args)
         {
@@ -36,7 +37,7 @@ namespace CheckOnlineVkfaces
         /// <summary>
         /// Класс отвечает за управление пользователями.
         /// </summary>
-        class Manager
+        public class Manager
         {
             /// <summary>
             /// Инициализация менеджера.
@@ -63,6 +64,11 @@ namespace CheckOnlineVkfaces
             /// Список пользователей.
             /// </summary>
             private ISet<Client> Clients = new HashSet<Client>();
+
+            /// <summary>
+            /// Количество клиентов под управлением.
+            /// </summary>
+            public int Count => Clients.Count;
 
             /// <summary>
             /// Добавление пользователя в список проверок.
@@ -119,7 +125,7 @@ namespace CheckOnlineVkfaces
         /// <summary>
         /// Представляет одного пользователя ВК.
         /// </summary>
-        class Client
+        public class Client
         {
             /// <summary>
             /// Инициализация клиента.
@@ -222,14 +228,8 @@ namespace CheckOnlineVkfaces
             /// <returns>Текстовое представление о последней активности заходов и выходов пользователя.</returns>
             private string GetDate_unsafe()
             {
-                string data = "";
-                using (var client = new WebClient())
-                {
-                    byte[] bytes = client.DownloadData("https://vkfaces.com/vk/user/" + Vkid);
-                    char[] outchars = new char[bytes.Length * 2];
-                    Encoding.UTF8.GetDecoder().Convert(bytes, 0, bytes.Length, outchars, 0, outchars.Length, true, out int a, out a, out bool completed);
-                    data = new string(outchars).Replace("\0", "").Trim();
-                }
+                string data = ReadAsDotnet("https://vkfaces.com/", "vk/user/" + Vkid);
+                
                 int begin = data.IndexOf("Последнее посещение");
                 if (begin > 0)
                     data = data.Remove(0, begin);
@@ -245,6 +245,31 @@ namespace CheckOnlineVkfaces
                     data = data.Remove(begin, data.Length - begin);
                 else
                     throw new Exception("Новая строка не найдена.");
+                return data;
+            }
+
+            private string ReadAsXNet(string server, string addr)
+            {
+                using (var client = new xNet.HttpRequest(server))
+                {
+                    return client.Get(addr).ToString();
+                }
+            }
+
+            private string ReadAsDotnet(string server, string addr)
+            {
+                string data;
+                var client = WebRequest.CreateHttp(server + addr);
+                client.KeepAlive = true;
+                client.ReadWriteTimeout = 200000;
+                client.Timeout = 200000;
+                var resp = client.GetResponse();
+                var srm = resp.GetResponseStream();
+                var rsrm = new StreamReader(srm);
+                data = rsrm.ReadToEnd();
+                rsrm.Close();
+                srm.Close();
+                resp.Close();
                 return data;
             }
 
